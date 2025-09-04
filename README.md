@@ -66,4 +66,8 @@ $ cast --help
 ```
 
 # uniswap-v4-hook-incubator-capstone-compliance-hook
-Compliance Hook for Regulated Pools--> Compliance Hook for Uniswap V4 that integrates KYC/AML checks for institutional users. 
+Compliance Hook for Regulated Pools--> Compliance Hook for Uniswap V4 that integrates KYC/AML checks for institutional users.
+Deployed Contract
+Contract Address**: `0x81Df62bD323cD2CE7484c7941000fd7104ec0a7c`
+Network**: Sepolia Testnet
+Explorer**: [View on Etherscan](https://sepolia.etherscan.io/address/0x81Df62bD323cD2CE7484c7941000fd7104ec0a7c)

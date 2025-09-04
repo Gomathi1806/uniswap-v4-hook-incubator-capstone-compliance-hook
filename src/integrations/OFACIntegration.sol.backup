@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract OFACIntegration is Ownable {
+    // OFAC sanctioned addresses
+    mapping(address => bool) public ofacSanctioned;
+    mapping(address => string) public sanctionReason;
+
+    // Events
+    event AddressAddedToOFAC(address indexed addr, string reason);
+    event AddressRemovedFromOFAC(address indexed addr);
+
+    constructor() Ownable(msg.sender) {
+        // Add known OFAC sanctioned addresses (from public lists)
+        _addKnownSanctionedAddresses();
+    }
+
+    function isSanctioned(address addr) external view returns (bool) {
+        return ofacSanctioned[addr];
+    }
+
+    function getSanctionReason(
+        address addr
+    ) external view returns (string memory) {
+        return sanctionReason[addr];
+    }
+
+    function addSanctionedAddress(
+        address addr,
+        string calldata reason
+    ) external onlyOwner {
+        ofacSanctioned[addr] = true;
+        sanctionReason[addr] = reason;
+        emit AddressAddedToOFAC(addr, reason);
+    }
+
+    function removeSanctionedAddress(address addr) external onlyOwner {
+        ofacSanctioned[addr] = false;
+        delete sanctionReason[addr];
+        emit AddressRemovedFromOFAC(addr);
+    }
+
+    function batchAddSanctions(
+        address[] calldata addresses,
+        string[] calldata reasons
+    ) external onlyOwner {
+        require(addresses.length == reasons.length, "Array length mismatch");
+
+        for (uint256 i = 0; i < addresses.length; i++) {
+            ofacSanctioned[addresses[i]] = true;
+            sanctionReason[addresses[i]] = reasons[i];
+            emit AddressAddedToOFAC(addresses[i], reasons[i]);
+        }
+    }
+
+    function _addKnownSanctionedAddresses() internal {
+        // Add known sanctioned addresses from public OFAC lists
+        // These can be updated by calling the public API endpoints
+
+        // Example: Lazarus Group addresses (publicly known)
+        address[3] memory lazarusAddresses = [
+            0x098B716B8Aaf21512996dC57EB0615e2383E2f96,
+            0xA7e5d5A720f06526557c513402f2e6B5fA20b008,
+            0x7F367cC41522cE07553e823bf3be79A889DEbe1B
+        ];
+
+        for (uint256 i = 0; i < lazarusAddresses.length; i++) {
+            ofacSanctioned[lazarusAddresses[i]] = true;
+            sanctionReason[lazarusAddresses[i]] = "OFAC - Lazarus Group";
+        }
+    }
+}

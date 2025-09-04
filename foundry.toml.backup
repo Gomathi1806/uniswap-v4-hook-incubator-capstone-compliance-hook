@@ -1,0 +1,27 @@
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.26"
+optimizer = true
+optimizer_runs = 1000000
+
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "v4-core/=lib/v4-core/src/",
+    "v4-periphery/=lib/v4-periphery/src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+]
+
+[rpc_endpoints]
+sepolia = "${https://eth-sepolia.g.alchemy.com/v2/CgS5Hdt0EEKr5K2JK0lfw}"
+
+[etherscan]
+sepolia = { key = "${C26PD39NT9MYR4JJRCI4K6AAAMVB8S6WS9}" }
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "v4-core/=lib/v4-core/src/",
+    "v4-periphery/=lib/v4-periphery/src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+]

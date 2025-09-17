@@ -1,73 +1,122 @@
-## Foundry
+Uniswap V4 Compliance Hook with FHE Integration
+A privacy-preserving, institutional-grade KYC/AML compliance system for Uniswap V4 that integrates Fhenix FHE technology for confidential compliance verification.
+🔒 Privacy-First Compliance
+This project combines traditional compliance requirements with cutting-edge privacy technology, ensuring regulatory compliance without sacrificing user confidentiality.
+📋 Project Overview
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Main Contract: 0x1d9be48c270dbda27e22c65cb899cce55763ebf4 (Sepolia)
+Network: Ethereum Sepolia Testnet
+Framework: Foundry + React Frontend
+Privacy Layer: Fhenix FHE Integration (Planned)
+Identity Verification: World ID Integration (Planned)
 
-Foundry consists of:
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Frontend      │────│ Compliance Hook │────│ Fhenix FHE      │
+│   Dashboard     │    │ (Sepolia)       │    │ (Privacy Layer) │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   MetaMask      │    │ Risk Assessment │    │ World ID        │
+│   Integration   │    │ & Scoring       │    │ Verification    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+Getting Started
+Prerequisites
 
-## Documentation
+Node.js 18+ and npm
+Foundry (forge, cast, anvil)
+MetaMask wallet
+Sepolia ETH for testing
 
-https://book.getfoundry.sh/
+Installation
 
-## Usage
+Clone the Repository
 
-### Build
+bash   git clone <your-repo-url>
+   cd compliance-hook-project
+   Install Dependencies
 
-```shell
-$ forge build
-```
+bash   # Install Foundry dependencies
+   forge install
+   
+   # Install frontend dependencies (if using React frontend)
+   npm install
 
-### Test
+Environment Setup
 
-```shell
-$ forge test
-```
+bash   # Create environment file
+   cp .env.example .env
+   
+   # Configure your environment variables
+   PRIVATE_KEY=your_private_key_here
+   ETHERSCAN_API_KEY=your_etherscan_api_key
+   SEPOLIA_RPC_URL=https://eth-sepolia.public.blastapi.io
 
-### Format
+   Running the Project
+Step 1: Deploy Contract (Already Deployed)
+The main contract is already deployed at 0x1d9be48c270dbda27e22c65cb899cce55763ebf4 on Sepolia.
+To interact with the deployed contract:
+bash# Check contract owner
+cast call \
+  --rpc-url https://eth-sepolia.public.blastapi.io \
+  0x1d9be48c270dbda27e22c65cb899cce55763ebf4 \
+  "owner()(address)"
 
-```shell
-$ forge fmt
-```
+# Check user compliance status
+cast call \
+  --rpc-url https://eth-sepolia.public.blastapi.io \
+  0x1d9be48c270dbda27e22c65cb899cce55763ebf4 \
+  "isCompliant(address)(bool)" \
+  0xYOUR_ADDRESS_HERE
 
-### Gas Snapshots
+  Step 2: Run Frontend Dashboard
 
-```shell
-$ forge snapshot
-```
+Open the Frontend
 
-### Anvil
+cd fronend
+npm install
 
-```shell
-$ anvil
-```
+npm run dev
+Local:   http://localhost:5173/
 
-### Deploy
+Step 3: Test Compliance Functions
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+As Contract Owner:
 
-### Cast
+Verify users with risk scores (0-100)
+Monitor compliance status
+View transaction history
 
-```shell
-$ cast <subcommand>
-```
 
-### Help
+As Regular User:
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Check your compliance status
+View your risk score
+Monitor verification status.
+
+Fhenix Integration (partnership) implementation code
+
+test/ Enhancedcompliancehook.sol-->(  lines 13, 18, 174 to 193)
+// src/libraries/FHEOperations.sol
+
+
 
 # uniswap-v4-hook-incubator-capstone-compliance-hook
 Compliance Hook for Regulated Pools--> Compliance Hook for Uniswap V4 that integrates KYC/AML checks for institutional users.
 Deployed Contract
 Contract Address**: `0x81Df62bD323cD2CE7484c7941000fd7104ec0a7c`
+**Contract Address---> 0x0809Dd9b5B1403188E650725B02D634a63233480   (enhanced compliance.sol---Fhenix Integration)
+
+https://sepolia.etherscan.io/address/0x0809dd9b5b1403188e650725b02d634a63233480
+Contract Address: 0x5553FFb42bD40d3444F0fF9084Df0c7C49f329Be  (oracle)**
+
+Explorer**:   -->  https://sepolia.etherscan.io/address/0x5553ffb42bd40d3444f0ff9084df0c7c49f329be
+
+Fhenixcompliancehook--->0x1D9be48c270dBDa27e22C65cb899cCe55763eBf4
+
 Network**: Sepolia Testnet
-Explorer**: [View on Etherscan](https://sepolia.etherscan.io/address/0x81Df62bD323cD2CE7484c7941000fd7104ec0a7c)
+Explorer**: [View on Etherscan](https://sepolia.etherscan.io/address/0x0809dd9b5b1403188e650725b02d634a63233480)
+
+

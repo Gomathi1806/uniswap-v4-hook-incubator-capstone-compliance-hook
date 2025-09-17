@@ -1,0 +1,5 @@
+{
+  "name": "Lexifi Uniswap Compliance",
+  "description": "A web interface to manage the KYC list for a Uniswap V4 compliance hook. Connect your wallet, load your contract, and easily add, remove, or check KYC-approved addresses.",
+  "requestFramePermissions": []
+}

@@ -2,24 +2,29 @@ import React, { useState } from 'react';
 import Web3 from 'web3';
 import { Contract } from 'web3-eth-contract';
 import ComplianceManager from './KycManager';
-import { DEFAULT_ABI } from '../constants';
-import { AbiItem } from '../types';
-import type { NotificationType } from '../App';
-
+//import { DEFAULT_ABI } from '../../constants';
+import { AbiItem } from '../../types';
+import type { NotificationType } from '../../App';
+import { HOOK_ABI, HOOK_ADDRESS } from '../constants';
+import AdminPanel from './AdminPanel';
+import ContractDebugger from './ContractDebugger';
+import BackendDataPopulator from './BackendDataPopulator';
 interface ContractInteractorProps {
   web3: Web3 | null;
   account: string;
-  // Fix: The Contract type from web3-eth-contract is generic and requires a type argument. Using `any` for flexibility.
+  // Fix: The Contract type from web3-eth-contract is generic. Using `any` for flexibility.
   loadContract: (address: string, abi: AbiItem[]) => Contract<any> | null;
+  // Fix: The Contract type from web3-eth-contract is generic. Using `any` for flexibility.
   loadedContract: Contract<any> | null;
   showNotification: (message: string, type: NotificationType) => void;
 }
 
 const ContractInteractor: React.FC<ContractInteractorProps> = ({ web3, account, loadContract, loadedContract, showNotification }) => {
-  const [contractAddress, setContractAddress] = useState('');
-  const [abi, setAbi] = useState(DEFAULT_ABI);
+  const [contractAddress, setContractAddress] = useState('0x9a65bD1Ae5bb75697f6DAbeb132C776428339DFb');
+  
+  //const [abi, setAbi] = useState(DEFAULT_ABI);
   const [isLoading, setIsLoading] = useState(false);
-
+  const [abi, setAbi] = useState(HOOK_ABI);
   const handleLoadContract = () => {
     setIsLoading(true);
     if (!web3) {
@@ -84,6 +89,22 @@ const ContractInteractor: React.FC<ContractInteractorProps> = ({ web3, account, 
           </div>
         </div>
       ) : (
+          <>
+          <AdminPanel 
+            web3={web3} 
+            account={account} 
+            showNotification={showNotification} 
+            />
+            <BackendDataPopulator 
+             web3={web3} 
+             account={account} 
+             showNotification={showNotification} 
+             />
+            <ContractDebugger 
+             web3={web3} 
+             account={account} 
+             showNotification={showNotification} 
+            />
         <ComplianceManager 
           contract={loadedContract} 
           account={account} 

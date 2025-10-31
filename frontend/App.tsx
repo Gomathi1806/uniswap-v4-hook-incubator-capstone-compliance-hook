@@ -1,17 +1,15 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import Web3 from 'web3';
-// Fix: The Contract type from web3-eth-contract is generic and requires a type argument.
 import { Contract } from 'web3-eth-contract';
-import Header from './components/Header';
-import ContractInteractor from './components/ContractInteractor';
-import Notification from './components/Notification';
+import Header from './src/components/Header';
+import ContractInteractor from './src/components/ContractInteractor';
+import Notification from './src/components/Notification';
 import { AbiItem } from './types';
+import './App.css';
 
-// Declare global types for window.ethereum and window.Web3 from CDN
 declare global {
   interface Window {
     ethereum?: any;
-    Web3?: any;
   }
 }
 
@@ -22,10 +20,12 @@ export interface NotificationState {
   type: NotificationType;
 }
 
+const ARBITRUM_SEPOLIA_CHAIN_ID = '0x66eee'; // 421614 in hex
+const ARBITRUM_SEPOLIA_RPC = 'https://sepolia-rollup.arbitrum.io/rpc';
+
 const App: React.FC = () => {
   const [web3, setWeb3] = useState<Web3 | null>(null);
   const [account, setAccount] = useState<string | null>(null);
-  // Fix: The Contract type from web3-eth-contract is generic and requires a type argument. Using `any` for flexibility.
   const [contract, setContract] = useState<Contract<any> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<NotificationState | null>(null);
@@ -34,15 +34,61 @@ const App: React.FC = () => {
     setNotification({ message, type });
   };
 
+  const switchToArbitrumSepolia = async () => {
+    if (!window.ethereum) return false;
+    
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: ARBITRUM_SEPOLIA_CHAIN_ID }],
+      });
+      return true;
+    } catch (switchError: any) {
+      if (switchError.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: ARBITRUM_SEPOLIA_CHAIN_ID,
+              chainName: 'Arbitrum Sepolia',
+              nativeCurrency: {
+                name: 'ETH',
+                symbol: 'ETH',
+                decimals: 18
+              },
+              rpcUrls: [ARBITRUM_SEPOLIA_RPC],
+              blockExplorerUrls: ['https://sepolia.arbiscan.io/']
+            }]
+          });
+          return true;
+        } catch (addError) {
+          console.error('Failed to add network:', addError);
+          return false;
+        }
+      }
+      return false;
+    }
+  };
+
   const connectWallet = useCallback(async () => {
     setError(null);
     if (window.ethereum) {
       try {
         await window.ethereum.request({ method: 'eth_requestAccounts' });
+        
+        // Switch to Arbitrum Sepolia
+        const switched = await switchToArbitrumSepolia();
+        if (!switched) {
+          showNotification('Please switch to Arbitrum Sepolia network', 'error');
+          return;
+        }
+
         const web3Instance = new Web3(window.ethereum);
         setWeb3(web3Instance);
         const accounts = await web3Instance.eth.getAccounts();
         setAccount(accounts[0]);
+        
+        showNotification('Connected to Arbitrum Sepolia!', 'success');
       } catch (err: any) {
         setError('Failed to connect wallet. ' + err.message);
         showNotification('Failed to connect wallet.', 'error');
@@ -64,13 +110,16 @@ const App: React.FC = () => {
           setContract(null);
         }
       });
+
+      window.ethereum.on('chainChanged', () => {
+        window.location.reload();
+      });
     }
   }, []);
 
   const loadContract = useCallback((address: string, abi: AbiItem[]) => {
     if (web3) {
       try {
-        // Fix: Cast ABI to `any` to avoid type errors with the `web3.eth.Contract` constructor which expects a more strictly typed ABI.
         const contractInstance = new web3.eth.Contract(abi as any, address);
         setContract(contractInstance);
         showNotification('Contract loaded successfully!', 'success');
@@ -100,7 +149,9 @@ const App: React.FC = () => {
         ) : (
           <div className="text-center mt-20 bg-slate-800/50 p-10 rounded-xl border border-slate-700">
             <h2 className="text-2xl font-bold text-cyan-400 mb-4">Welcome to Lexifi</h2>
-            <p className="text-slate-400 mb-6">Please connect your wallet to manage your Uniswap V4 compliance hook.</p>
+            <p className="text-slate-400 mb-6">
+              Connect your wallet to manage your Uniswap V4 compliance hook on Arbitrum Sepolia
+            </p>
             <button
               onClick={connectWallet}
               className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-300"

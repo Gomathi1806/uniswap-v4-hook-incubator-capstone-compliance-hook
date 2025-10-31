@@ -1,0 +1,368 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+import {BaseHook} from "v4-periphery/BaseHook.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+
+/**
+ * @title UniswapV4ComplianceHook - PRODUCTION VERSION
+ * @dev Real-time compliance checking for Uniswap V4 swaps
+ * @notice Integrates with Risk Calculator for automated compliance
+ */
+contract UniswapV4ComplianceHook is BaseHook {
+    using PoolIdLibrary for PoolKey;
+
+    // Compliance contracts
+    address public riskCalculatorAddress;
+    address public chainlinkOracleAddress;
+    address public fhenixFHEAddress;
+    
+    // Minimum acceptable risk score (0-100)
+    uint256 public minRiskScore = 30;
+    
+    // Whitelist for bypassing compliance (e.g., verified institutions)
+    mapping(address => bool) public whitelisted;
+    
+    // Blacklist for blocked addresses
+    mapping(address => bool) public blacklisted;
+    
+    // Pool-specific compliance requirements
+    mapping(PoolId => bool) public poolRequiresCompliance;
+    mapping(PoolId => uint256) public poolMinRiskScore;
+    
+    // Events
+    event ComplianceCheckPassed(address indexed user, uint256 riskScore);
+    event ComplianceCheckFailed(address indexed user, uint256 riskScore, string reason);
+    event AddressWhitelisted(address indexed user);
+    event AddressBlacklisted(address indexed user);
+    event PoolComplianceConfigured(PoolId indexed poolId, bool requiresCompliance, uint256 minScore);
+    
+    // Errors
+    error ComplianceCheckFailed(string reason);
+    error InsufficientRiskScore(uint256 actual, uint256 required);
+    error AddressBlacklisted();
+    error AddressNotWhitelisted();
+    
+    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
+    
+    /**
+     * @dev Set compliance contract addresses
+     */
+    function setComplianceContracts(
+        address _riskCalculator,
+        address _chainlinkOracle,
+        address _fhenixFHE
+    ) external {
+        require(msg.sender == address(this) || msg.sender == address(poolManager), "Not authorized");
+        riskCalculatorAddress = _riskCalculator;
+        chainlinkOracleAddress = _chainlinkOracle;
+        fhenixFHEAddress = _fhenixFHE;
+    }
+    
+    /**
+     * @dev Set minimum risk score
+     */
+    function setMinRiskScore(uint256 _minRiskScore) external {
+        require(msg.sender == address(this), "Not authorized");
+        require(_minRiskScore <= 100, "Invalid score");
+        minRiskScore = _minRiskScore;
+    }
+    
+    /**
+     * @dev Configure compliance for a specific pool
+     */
+    function configurePoolCompliance(
+        PoolKey calldata key,
+        bool requiresCompliance,
+        uint256 minScore
+    ) external {
+        require(msg.sender == address(this), "Not authorized");
+        PoolId poolId = key.toId();
+        poolRequiresCompliance[poolId] = requiresCompliance;
+        poolMinRiskScore[poolId] = minScore;
+        
+        emit PoolComplianceConfigured(poolId, requiresCompliance, minScore);
+    }
+    
+    /**
+     * @dev Add address to whitelist
+     */
+    function addToWhitelist(address user) external {
+        require(msg.sender == address(this), "Not authorized");
+        whitelisted[user] = true;
+        emit AddressWhitelisted(user);
+    }
+    
+    /**
+     * @dev Add address to blacklist
+     */
+    function addToBlacklist(address user) external {
+        require(msg.sender == address(this), "Not authorized");
+        blacklisted[user] = true;
+        emit AddressBlacklisted(user);
+    }
+    
+    /**
+     * @dev Remove from whitelist
+     */
+    function removeFromWhitelist(address user) external {
+        require(msg.sender == address(this), "Not authorized");
+        whitelisted[user] = false;
+    }
+    
+    /**
+     * @dev Remove from blacklist
+     */
+    function removeFromBlacklist(address user) external {
+        require(msg.sender == address(this), "Not authorized");
+        blacklisted[user] = false;
+    }
+    
+    /**
+     * @dev Get hook permissions
+     */
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+        return Hooks.Permissions({
+            beforeInitialize: false,
+            afterInitialize: false,
+            beforeAddLiquidity: true,
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: true,
+            afterRemoveLiquidity: false,
+            beforeSwap: true,
+            afterSwap: false,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: false
+        });
+    }
+    
+    /**
+     * @dev Before swap hook - check compliance
+     */
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external override returns (bytes4, BeforeSwapDelta, uint24) {
+        PoolId poolId = key.toId();
+        
+        // Check if this pool requires compliance
+        if (poolRequiresCompliance[poolId]) {
+            uint256 requiredScore = poolMinRiskScore[poolId] > 0 
+                ? poolMinRiskScore[poolId] 
+                : minRiskScore;
+            
+            _checkCompliance(sender, requiredScore);
+        }
+        
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+    
+    /**
+     * @dev Before add liquidity hook - check compliance
+     */
+    function beforeAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external override returns (bytes4) {
+        PoolId poolId = key.toId();
+        
+        // Check if this pool requires compliance
+        if (poolRequiresCompliance[poolId]) {
+            uint256 requiredScore = poolMinRiskScore[poolId] > 0 
+                ? poolMinRiskScore[poolId] 
+                : minRiskScore;
+            
+            _checkCompliance(sender, requiredScore);
+        }
+        
+        return BaseHook.beforeAddLiquidity.selector;
+    }
+    
+    /**
+     * @dev Before remove liquidity hook - check compliance
+     */
+    function beforeRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata hookData
+    ) external override returns (bytes4) {
+        PoolId poolId = key.toId();
+        
+        // Check if this pool requires compliance (optional for removals)
+        if (poolRequiresCompliance[poolId]) {
+            uint256 requiredScore = poolMinRiskScore[poolId] > 0 
+                ? poolMinRiskScore[poolId] 
+                : minRiskScore;
+            
+            // More lenient check for liquidity removal
+            _checkCompliance(sender, requiredScore / 2);
+        }
+        
+        return BaseHook.beforeRemoveLiquidity.selector;
+    }
+    
+    /**
+     * @dev Internal compliance check
+     */
+    function _checkCompliance(address user, uint256 requiredScore) internal view {
+        // 1. Check blacklist first (immediate rejection)
+        if (blacklisted[user]) {
+            revert AddressBlacklisted();
+        }
+        
+        // 2. Check whitelist (bypass compliance)
+        if (whitelisted[user]) {
+            return;
+        }
+        
+        // 3. Check risk score from Risk Calculator
+        if (riskCalculatorAddress != address(0)) {
+            (bool success, bytes memory data) = riskCalculatorAddress.staticcall(
+                abi.encodeWithSignature("calculateRiskScore(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                uint256 riskScore = abi.decode(data, (uint256));
+                
+                if (riskScore < requiredScore) {
+                    revert InsufficientRiskScore(riskScore, requiredScore);
+                }
+                
+                emit ComplianceCheckPassed(user, riskScore);
+            } else {
+                // If no data available, reject transaction
+                revert ComplianceCheckFailed("No risk data available");
+            }
+        }
+        
+        // 4. Check sanctions from Chainlink Oracle
+        if (chainlinkOracleAddress != address(0)) {
+            (bool success, bytes memory data) = chainlinkOracleAddress.staticcall(
+                abi.encodeWithSignature("isSanctioned(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                bool sanctioned = abi.decode(data, (bool));
+                
+                if (sanctioned) {
+                    emit ComplianceCheckFailed(user, 0, "Address is sanctioned");
+                    revert ComplianceCheckFailed("Address is sanctioned");
+                }
+            }
+        }
+    }
+    
+    /**
+     * @dev Get compliance status for a user
+     */
+    function getComplianceStatus(address user) external view returns (
+        bool isWhitelisted,
+        bool isBlacklisted,
+        uint256 riskScore,
+        bool isSanctioned,
+        bool meetsMinimum
+    ) {
+        isWhitelisted = whitelisted[user];
+        isBlacklisted = blacklisted[user];
+        
+        // Get risk score
+        if (riskCalculatorAddress != address(0)) {
+            (bool success, bytes memory data) = riskCalculatorAddress.staticcall(
+                abi.encodeWithSignature("calculateRiskScore(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                riskScore = abi.decode(data, (uint256));
+            }
+        }
+        
+        // Check sanctions
+        if (chainlinkOracleAddress != address(0)) {
+            (bool success, bytes memory data) = chainlinkOracleAddress.staticcall(
+                abi.encodeWithSignature("isSanctioned(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                isSanctioned = abi.decode(data, (bool));
+            }
+        }
+        
+        meetsMinimum = riskScore >= minRiskScore && !isSanctioned && !isBlacklisted;
+        
+        return (isWhitelisted, isBlacklisted, riskScore, isSanctioned, meetsMinimum);
+    }
+    
+    /**
+     * @dev Check if user can trade in a specific pool
+     */
+    function canTrade(address user, PoolKey calldata key) external view returns (bool, string memory) {
+        PoolId poolId = key.toId();
+        
+        // If pool doesn't require compliance, anyone can trade
+        if (!poolRequiresCompliance[poolId]) {
+            return (true, "Pool does not require compliance");
+        }
+        
+        // Check blacklist
+        if (blacklisted[user]) {
+            return (false, "Address is blacklisted");
+        }
+        
+        // Check whitelist (bypasses all checks)
+        if (whitelisted[user]) {
+            return (true, "Address is whitelisted");
+        }
+        
+        uint256 requiredScore = poolMinRiskScore[poolId] > 0 
+            ? poolMinRiskScore[poolId] 
+            : minRiskScore;
+        
+        // Check risk score
+        if (riskCalculatorAddress != address(0)) {
+            (bool success, bytes memory data) = riskCalculatorAddress.staticcall(
+                abi.encodeWithSignature("calculateRiskScore(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                uint256 riskScore = abi.decode(data, (uint256));
+                
+                if (riskScore < requiredScore) {
+                    return (false, "Insufficient risk score");
+                }
+            } else {
+                return (false, "No risk data available");
+            }
+        }
+        
+        // Check sanctions
+        if (chainlinkOracleAddress != address(0)) {
+            (bool success, bytes memory data) = chainlinkOracleAddress.staticcall(
+                abi.encodeWithSignature("isSanctioned(address)", user)
+            );
+            
+            if (success && data.length > 0) {
+                bool sanctioned = abi.decode(data, (bool));
+                
+                if (sanctioned) {
+                    return (false, "Address is sanctioned");
+                }
+            }
+        }
+        
+        return (true, "Compliance check passed");
+    }
+}

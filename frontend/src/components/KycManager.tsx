@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Contract } from 'web3-eth-contract';
-import type { NotificationType } from '../App';
+import type { NotificationType } from '../../App';
 
 interface ComplianceManagerProps {
-  // Fix: The Contract type from web3-eth-contract is generic and requires a type argument. Using `any` for flexibility.
+  // Fix: The Contract type from web3-eth-contract is generic. Using `any` for flexibility.
   contract: Contract<any>;
   account: string;
   showNotification: (message: string, type: NotificationType) => void;
@@ -54,7 +54,7 @@ const ComplianceManager: React.FC<ComplianceManagerProps> = ({ contract, account
     setScoreResult(null);
     try {
       const result = await contract.methods.getUserRiskScore(scoreAddress).call();
-      // Fix: Use String() to safely convert the contract call result to a string, as its type is broad and may not have a `.toString()` method.
+      // Fix: Use String() to safely convert the result to a string, as the inferred type might not have a .toString() method.
       setScoreResult(`Risk score for ${scoreAddress} is: ${String(result)}`);
     } catch (error: any) {
       showNotification(`Error getting risk score: ${error.message}`, 'error');

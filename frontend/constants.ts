@@ -1,131 +1,89 @@
+export const HOOK_ADDRESS = '0x3422ec82B0164fAB9d106a239524a7af450dce2B';
+export const RISK_CALCULATOR_ADDRESS = '0xC832d3a0a8349aE0b407AFd71F58c41f732137C9';
+export const FHENIX_COMPLIANCE_ADDRESS = '0xEae8DE4CFDFdEfe892180F54A8Fa0639F3A7A08e';
+export const CHAINLINK_ORACLE_ADDRESS = '0x74B92925FE7898875A19aC7cB9a662eF14DAe41A';
+
 export const DEFAULT_ABI = `[
   {
-    "inputs": [],
-    "stateMutability": "nonpayable",
-    "type": "constructor"
-  },
-  {
-    "anonymous": false,
     "inputs": [
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "riskScore",
-        "type": "uint256"
-      }
+      {"internalType": "address", "name": "user", "type": "address"}
     ],
-    "name": "UserVerified",
-    "type": "event"
+    "name": "isCompliant",
+    "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      }
+      {"internalType": "address", "name": "user", "type": "address"}
     ],
-    "name": "getUserRiskScore",
+    "name": "getUserInfo",
     "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
+      {"internalType": "bool", "name": "isWhitelisted", "type": "bool"},
+      {"internalType": "bool", "name": "isBlacklisted", "type": "bool"},
+      {"internalType": "bool", "name": "isSanctioned", "type": "bool"},
+      {"internalType": "bool", "name": "isHighRisk", "type": "bool"},
+      {"internalType": "uint256", "name": "riskScore", "type": "uint256"},
+      {"internalType": "uint256", "name": "totalSwaps", "type": "uint256"}
     ],
     "stateMutability": "view",
     "type": "function"
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      }
+      {"internalType": "address", "name": "user", "type": "address"},
+      {"internalType": "bool", "name": "status", "type": "bool"}
     ],
-    "name": "isCompliant",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
+    "name": "setWhitelisted",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"internalType": "address", "name": "user", "type": "address"},
+      {"internalType": "bool", "name": "status", "type": "bool"}
     ],
+    "name": "setBlacklisted",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "paused",
+    "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
     "stateMutability": "view",
     "type": "function"
   },
   {
     "inputs": [],
     "name": "owner",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
+    "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "globalRiskThreshold",
+    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
     "stateMutability": "view",
     "type": "function"
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
+      {"internalType": "uint256", "name": "threshold", "type": "uint256"}
     ],
-    "name": "riskScores",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
+    "name": "setGlobalRiskThreshold",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
+      {"internalType": "bool", "name": "_paused", "type": "bool"}
     ],
-    "name": "verifiedUsers",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "riskScore",
-        "type": "uint256"
-      }
-    ],
-    "name": "verifyUser",
+    "name": "setPaused",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

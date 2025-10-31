@@ -1,0 +1,18 @@
+
+.App {
+  text-align: left;
+}
+
+button {
+  transition: all 0.2s;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

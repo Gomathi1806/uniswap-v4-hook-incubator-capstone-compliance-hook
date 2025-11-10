@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {SwapParams, ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+import {BaseHook} from "v4-periphery/base/hooks/BaseHook.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
 
-contract TieredComplianceHook is IHooks {
+// Risk calculator interface - OUTSIDE the contract
+interface IRiskCalculator {
+    function getUserRiskScore(address user) external view returns (uint256 score, uint256 timestamp);
+}
+
+contract ComplianceHook is BaseHook {
     using PoolIdLibrary for PoolKey;
 
+    // Enums
     enum ComplianceTier { PUBLIC, VERIFIED, INSTITUTIONAL }
-    
+    enum UserStatus { NON_COMPLIANT, PUBLIC, VERIFIED, INSTITUTIONAL, WHITELISTED, BLACKLISTED }
+
+    // Structs
     struct PoolConfig {
         ComplianceTier tier;
         address creator;
@@ -23,204 +29,175 @@ contract TieredComplianceHook is IHooks {
         uint256 createdAt;
     }
 
-    IPoolManager public immutable poolManager;
-    address public constant RISK_CALCULATOR = 0xa78751349D496a726dCfde91bec2C5BE9b52f31E;
-    address public constant CHAINLINK_ORACLE = 0xF2bDcA9B4776f7d2752E33b98513D4a284736818;
-    address public constant FHENIX_FHE = 0xEae8DE4CFDFdEfe892180F54A8Fa0639F3A7A08e;
-    
-    mapping(PoolId => PoolConfig) public poolConfigs;
-    mapping(PoolId => mapping(address => bool)) public poolWhitelist;
-    mapping(ComplianceTier => uint256) public minimumScore;
-    mapping(address => bool) public kycVerified;
-    mapping(address => uint256) public kycExpiry;
-    mapping(address => bool) public institutionalEntity;
-    mapping(address => string) public entityName;
-    mapping(address => bool) public globalWhitelist;
-    mapping(address => bool) public globalBlacklist;
+    // State variables
     address public owner;
-    address public feeCollector;
-    uint256 public totalPools;
-    mapping(ComplianceTier => uint256) public poolsByTier;
-    mapping(address => uint256) public swapCount;
+    IRiskCalculator public riskCalculator;
+    
+    mapping(bytes32 => PoolConfig) public poolConfigs;
+    mapping(address => UserStatus) public userStatus;
+    mapping(bytes32 => mapping(address => bool)) public poolWhitelist;
+    
+    uint256 public poolCount;
+    uint256 public publicPoolCount;
+    uint256 public verifiedPoolCount;
+    uint256 public institutionalPoolCount;
 
-    event PoolCreated(PoolId indexed poolId, ComplianceTier tier, address indexed creator, bool requiresWhitelist, uint256 protocolFeeBps);
-    event SwapApproved(PoolId indexed poolId, address indexed user, ComplianceTier tier, uint256 riskScore);
+    // Events
+    event PoolRegistered(bytes32 indexed poolId, uint8 tier, address creator);
+    event UserStatusUpdated(address indexed user, UserStatus status);
+    event UserWhitelisted(bytes32 indexed poolId, address indexed user);
+    event SwapAttempt(address indexed user, bytes32 indexed poolId, bool allowed, string reason);
 
-    modifier onlyOwner() { require(msg.sender == owner, "Not owner"); _; }
-    modifier onlyPoolManager() { require(msg.sender == address(poolManager), "Not pool manager"); _; }
-
-    constructor(IPoolManager _poolManager, address _feeCollector) {
-        poolManager = _poolManager;
+    // Constructor
+    constructor(IPoolManager _poolManager, address _riskCalculator) BaseHook(_poolManager) {
         owner = msg.sender;
-        feeCollector = _feeCollector;
-        minimumScore[ComplianceTier.PUBLIC] = 50;
-        minimumScore[ComplianceTier.VERIFIED] = 75;
-        minimumScore[ComplianceTier.INSTITUTIONAL] = 90;
+        riskCalculator = IRiskCalculator(_riskCalculator);
     }
 
-    function getHookPermissions() external pure returns (Hooks.Permissions memory) {
+    // Modifier
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    // Hook permissions
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: true, afterInitialize: false, beforeAddLiquidity: true, afterAddLiquidity: false,
-            beforeRemoveLiquidity: true, afterRemoveLiquidity: false, beforeSwap: true, afterSwap: true,
-            beforeDonate: false, afterDonate: false, beforeSwapReturnDelta: false, afterSwapReturnDelta: false,
-            afterAddLiquidityReturnDelta: false, afterRemoveLiquidityReturnDelta: false
+            beforeInitialize: true,
+            afterInitialize: false,
+            beforeAddLiquidity: false,
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: false,
+            afterRemoveLiquidity: false,
+            beforeSwap: true,
+            afterSwap: false,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: false
         });
     }
 
-    // Match exact IHooks signatures from error messages
-    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) external onlyPoolManager returns (bytes4) {
-        // Decode tier from pool key or use default
-        // For now, default to PUBLIC - you can encode tier in key.hooks or elsewhere
+    // Before pool initialization
+    function beforeInitialize(
+        address,
+        PoolKey calldata key,
+        uint160,
+        bytes calldata hookData
+    ) external override returns (bytes4) {
+        (uint8 tier, bool requiresWhitelist, uint256 protocolFeeBps) = 
+            abi.decode(hookData, (uint8, bool, uint256));
+        
         PoolId poolId = key.toId();
-        poolConfigs[poolId] = PoolConfig(ComplianceTier.PUBLIC, sender, false, 0, block.timestamp);
-        totalPools++;
-        poolsByTier[ComplianceTier.PUBLIC]++;
-        emit PoolCreated(poolId, ComplianceTier.PUBLIC, sender, false, 0);
-        return IHooks.beforeInitialize.selector;
+        bytes32 poolIdBytes = PoolId.unwrap(poolId);
+        
+        poolConfigs[poolIdBytes] = PoolConfig({
+            tier: ComplianceTier(tier),
+            creator: tx.origin,
+            requiresWhitelist: requiresWhitelist,
+            protocolFeeBps: protocolFeeBps,
+            createdAt: block.timestamp
+        });
+        
+        poolCount++;
+        if (tier == 0) publicPoolCount++;
+        else if (tier == 1) verifiedPoolCount++;
+        else if (tier == 2) institutionalPoolCount++;
+        
+        emit PoolRegistered(poolIdBytes, tier, tx.origin);
+        
+        return this.beforeInitialize.selector;
     }
 
-    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick) external pure returns (bytes4) {
-        return IHooks.afterInitialize.selector;
-    }
-
-    function beforeAddLiquidity(
-        address sender,
+    // Before swap - compliance check
+    function beforeSwap(
+        address,
         PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        bytes calldata hookData
-    ) external onlyPoolManager returns (bytes4) {
-        require(checkCompliance(sender, key.toId(), poolConfigs[key.toId()].tier), "Compliance failed");
-        return IHooks.beforeAddLiquidity.selector;
-    }
-
-    function afterAddLiquidity(
-        address sender,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        BalanceDelta feesAccrued,
-        bytes calldata hookData
-    ) external pure returns (bytes4, BalanceDelta) {
-        return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    function beforeRemoveLiquidity(
-        address sender,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        bytes calldata hookData
-    ) external onlyPoolManager returns (bytes4) {
-        require(checkCompliance(sender, key.toId(), poolConfigs[key.toId()].tier), "Compliance failed");
-        return IHooks.beforeRemoveLiquidity.selector;
-    }
-
-    function afterRemoveLiquidity(
-        address sender,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        BalanceDelta feesAccrued,
-        bytes calldata hookData
-    ) external pure returns (bytes4, BalanceDelta) {
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    function beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
-        external onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24)
-    {
+        IPoolManager.SwapParams calldata,
+        bytes calldata
+    ) external override returns (bytes4, BeforeSwapDelta, uint24) {
         PoolId poolId = key.toId();
-        if (globalBlacklist[sender]) revert("Blacklisted");
-        if (!checkCompliance(sender, poolId, poolConfigs[poolId].tier)) revert("Compliance failed");
-        (uint256 score,) = IRiskCalculator(RISK_CALCULATOR).getUserRiskScore(sender);
-        swapCount[sender]++;
-        emit SwapApproved(poolId, sender, poolConfigs[poolId].tier, score);
-        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        bytes32 poolIdBytes = PoolId.unwrap(poolId);
+        PoolConfig memory config = poolConfigs[poolIdBytes];
+        
+        address user = tx.origin;
+        UserStatus status = getUserComplianceLevel(user);
+        
+        if (status == UserStatus.BLACKLISTED) {
+            emit SwapAttempt(user, poolIdBytes, false, "Blacklisted");
+            revert("User blacklisted");
+        }
+        
+        if (config.requiresWhitelist && !poolWhitelist[poolIdBytes][user]) {
+            emit SwapAttempt(user, poolIdBytes, false, "Not whitelisted");
+            revert("Not whitelisted");
+        }
+        
+        bool allowed = checkTierAccess(status, config.tier);
+        
+        if (!allowed) {
+            emit SwapAttempt(user, poolIdBytes, false, "Insufficient tier");
+            revert("Compliance failed");
+        }
+        
+        emit SwapAttempt(user, poolIdBytes, true, "Approved");
+        
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    function afterSwap(
-        address sender,
-        PoolKey calldata key,
-        SwapParams calldata params,
-        BalanceDelta delta,
-        bytes calldata hookData
-    ) external pure returns (bytes4, int128) {
-        return (IHooks.afterSwap.selector, 0);
+    // Get user compliance level
+    function getUserComplianceLevel(address user) public view returns (UserStatus) {
+        if (userStatus[user] != UserStatus.NON_COMPLIANT) {
+            return userStatus[user];
+        }
+        
+        try riskCalculator.getUserRiskScore(user) returns (uint256 score, uint256) {
+            if (score >= 90) return UserStatus.INSTITUTIONAL;
+            if (score >= 75) return UserStatus.VERIFIED;
+            if (score >= 50) return UserStatus.PUBLIC;
+        } catch {}
+        
+        return UserStatus.NON_COMPLIANT;
     }
 
-    function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external pure returns (bytes4)
-    {
-        return IHooks.beforeDonate.selector;
+    // Check tier access
+    function checkTierAccess(UserStatus userTier, ComplianceTier poolTier) internal pure returns (bool) {
+        if (userTier == UserStatus.WHITELISTED) return true;
+        if (userTier == UserStatus.BLACKLISTED) return false;
+        
+        if (poolTier == ComplianceTier.PUBLIC) {
+            return uint8(userTier) >= uint8(UserStatus.PUBLIC);
+        } else if (poolTier == ComplianceTier.VERIFIED) {
+            return uint8(userTier) >= uint8(UserStatus.VERIFIED);
+        } else if (poolTier == ComplianceTier.INSTITUTIONAL) {
+            return uint8(userTier) >= uint8(UserStatus.INSTITUTIONAL);
+        }
+        
+        return false;
     }
 
-    function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external pure returns (bytes4)
-    {
-        return IHooks.afterDonate.selector;
+    // Admin: Set user status
+    function setUserStatus(address user, UserStatus status) external onlyOwner {
+        userStatus[user] = status;
+        emit UserStatusUpdated(user, status);
     }
 
-    function checkCompliance(address user, PoolId poolId, ComplianceTier tier) internal view returns (bool) {
-        if (globalWhitelist[user]) return true;
-        if (tier == ComplianceTier.PUBLIC) return checkPublicCompliance(user);
-        if (tier == ComplianceTier.VERIFIED) return checkVerifiedCompliance(user);
-        return checkInstitutionalCompliance(user, poolId);
-    }
-
-    function checkPublicCompliance(address user) internal view returns (bool) {
-        (uint256 score,) = IRiskCalculator(RISK_CALCULATOR).getUserRiskScore(user);
-        if (score < minimumScore[ComplianceTier.PUBLIC]) return false;
-        if (IChainlinkOracle(CHAINLINK_ORACLE).isHighRisk(user)) return false;
-        try IFhenixFHE(FHENIX_FHE).checkSanctionsList(user) returns (bool s) { if (s) return false; } catch {}
-        return true;
-    }
-
-    function checkVerifiedCompliance(address user) internal view returns (bool) {
-        if (!checkPublicCompliance(user)) return false;
-        (uint256 score,) = IRiskCalculator(RISK_CALCULATOR).getUserRiskScore(user);
-        return score >= minimumScore[ComplianceTier.VERIFIED] && kycVerified[user] && block.timestamp <= kycExpiry[user];
-    }
-
-    function checkInstitutionalCompliance(address user, PoolId poolId) internal view returns (bool) {
-        if (!checkVerifiedCompliance(user)) return false;
-        (uint256 score,) = IRiskCalculator(RISK_CALCULATOR).getUserRiskScore(user);
-        if (score < minimumScore[ComplianceTier.INSTITUTIONAL] || !institutionalEntity[user]) return false;
-        return !poolConfigs[poolId].requiresWhitelist || poolWhitelist[poolId][user];
-    }
-
-    function registerInstitution(address entity, string calldata name) external onlyOwner {
-        institutionalEntity[entity] = true; entityName[entity] = name;
-        kycVerified[entity] = true; kycExpiry[entity] = block.timestamp + 365 days;
-    }
-
-    function verifyKYC(address user, uint256 validityDays) external onlyOwner {
-        kycVerified[user] = true; kycExpiry[user] = block.timestamp + (validityDays * 1 days);
-    }
-
-    function addToPoolWhitelist(PoolId poolId, address user) external {
-        require(msg.sender == poolConfigs[poolId].creator || msg.sender == owner, "Not authorized");
+    // Admin: Whitelist user for pool
+    function whitelistUser(bytes32 poolId, address user) external onlyOwner {
         poolWhitelist[poolId][user] = true;
+        emit UserWhitelisted(poolId, user);
     }
 
-    function addToGlobalWhitelist(address user) external onlyOwner { globalWhitelist[user] = true; }
-    function addToGlobalBlacklist(address user) external onlyOwner { globalBlacklist[user] = true; }
-    function setTierRequirement(ComplianceTier tier, uint256 score) external onlyOwner { minimumScore[tier] = score; }
-    function transferOwnership(address newOwner) external onlyOwner { owner = newOwner; }
-
-    function getUserComplianceLevel(address user) external view returns (string memory) {
-        if (globalBlacklist[user]) return "BLACKLISTED";
-        if (globalWhitelist[user]) return "WHITELISTED";
-        (uint256 score,) = IRiskCalculator(RISK_CALCULATOR).getUserRiskScore(user);
-        if (score >= 90 && institutionalEntity[user] && kycVerified[user] && block.timestamp <= kycExpiry[user]) return "INSTITUTIONAL";
-        if (score >= 75 && kycVerified[user] && block.timestamp <= kycExpiry[user]) return "VERIFIED";
-        if (score >= 50) return "PUBLIC";
-        return "NON_COMPLIANT";
-    }
-
+    // Get pool statistics
     function getPoolStats() external view returns (uint256, uint256, uint256, uint256) {
-        return (totalPools, poolsByTier[ComplianceTier.PUBLIC], poolsByTier[ComplianceTier.VERIFIED], poolsByTier[ComplianceTier.INSTITUTIONAL]);
+        return (poolCount, publicPoolCount, verifiedPoolCount, institutionalPoolCount);
+    }
+
+    // Transfer ownership
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Invalid address");
+        owner = newOwner;
     }
 }
-
-interface IRiskCalculator { function getUserRiskScore(address) external view returns (uint256, uint256); }
-interface IChainlinkOracle { function isHighRisk(address) external view returns (bool); }
-interface IFhenixFHE { function checkSanctionsList(address) external view returns (bool); }

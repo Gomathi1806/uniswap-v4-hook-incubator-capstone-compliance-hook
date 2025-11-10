@@ -1,48 +1,32 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity ^0.8.20;
 
 import {BaseHook} from "v4-periphery/base/hooks/BaseHook.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
-import {Currency} from "v4-core/types/Currency.sol";
+
+// Risk calculator interface - OUTSIDE the contract
+interface IRiskCalculator {
+    function getUserRiskScore(address user) external view returns (uint256 score, uint256 timestamp);
+}
 
 contract ComplianceHook is BaseHook {
     using PoolIdLibrary for PoolKey;
 
-    // Compliance levels
-    enum ComplianceTier {
-        PUBLIC,           // Anyone with score >= 50
-        VERIFIED,         // KYC verified, score >= 75
-        INSTITUTIONAL     // Registered institutions, score >= 90
-    }
+    // Enums
+    enum ComplianceTier { PUBLIC, VERIFIED, INSTITUTIONAL }
+    enum UserStatus { NON_COMPLIANT, PUBLIC, VERIFIED, INSTITUTIONAL, WHITELISTED, BLACKLISTED }
 
-    // User compliance status
-    enum UserStatus {
-        NON_COMPLIANT,
-        PUBLIC,
-        VERIFIED,
-        INSTITUTIONAL,
-        WHITELISTED,
-        BLACKLISTED
-    }
-
-    // Pool configuration
+    // Structs
     struct PoolConfig {
         ComplianceTier tier;
         address creator;
         bool requiresWhitelist;
         uint256 protocolFeeBps;
         uint256 createdAt;
-    }
-
-    // Risk calculator interface
-    interface IRiskCalculator {
-        function getUserRiskScore(address user) external view returns (uint256 score, uint256 timestamp);
-        function calculateRisk(address user) external returns (uint256);
     }
 
     // State variables
@@ -64,11 +48,13 @@ contract ComplianceHook is BaseHook {
     event UserWhitelisted(bytes32 indexed poolId, address indexed user);
     event SwapAttempt(address indexed user, bytes32 indexed poolId, bool allowed, string reason);
 
+    // Constructor
     constructor(IPoolManager _poolManager, address _riskCalculator) BaseHook(_poolManager) {
         owner = msg.sender;
         riskCalculator = IRiskCalculator(_riskCalculator);
     }
 
+    // Modifier
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
@@ -96,20 +82,17 @@ contract ComplianceHook is BaseHook {
 
     // Before pool initialization
     function beforeInitialize(
-        address sender,
+        address,
         PoolKey calldata key,
-        uint160 sqrtPriceX96,
+        uint160,
         bytes calldata hookData
     ) external override returns (bytes4) {
-        // Decode hook data
         (uint8 tier, bool requiresWhitelist, uint256 protocolFeeBps) = 
             abi.decode(hookData, (uint8, bool, uint256));
         
-        // Get pool ID
         PoolId poolId = key.toId();
         bytes32 poolIdBytes = PoolId.unwrap(poolId);
         
-        // Store pool config
         poolConfigs[poolIdBytes] = PoolConfig({
             tier: ComplianceTier(tier),
             creator: tx.origin,
@@ -118,78 +101,68 @@ contract ComplianceHook is BaseHook {
             createdAt: block.timestamp
         });
         
-        // Update counts
         poolCount++;
         if (tier == 0) publicPoolCount++;
         else if (tier == 1) verifiedPoolCount++;
         else if (tier == 2) institutionalPoolCount++;
         
-        // Emit event
         emit PoolRegistered(poolIdBytes, tier, tx.origin);
         
-        return BaseHook.beforeInitialize.selector;
+        return this.beforeInitialize.selector;
     }
 
     // Before swap - compliance check
     function beforeSwap(
-        address sender,
+        address,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
+        IPoolManager.SwapParams calldata,
+        bytes calldata
     ) external override returns (bytes4, BeforeSwapDelta, uint24) {
         PoolId poolId = key.toId();
         bytes32 poolIdBytes = PoolId.unwrap(poolId);
         PoolConfig memory config = poolConfigs[poolIdBytes];
         
-        // Get user status
         address user = tx.origin;
         UserStatus status = getUserComplianceLevel(user);
         
-        // Check if blacklisted
         if (status == UserStatus.BLACKLISTED) {
             emit SwapAttempt(user, poolIdBytes, false, "Blacklisted");
             revert("User blacklisted");
         }
         
-        // Check whitelist if required
         if (config.requiresWhitelist && !poolWhitelist[poolIdBytes][user]) {
             emit SwapAttempt(user, poolIdBytes, false, "Not whitelisted");
             revert("Not whitelisted");
         }
         
-        // Check tier requirements
         bool allowed = checkTierAccess(status, config.tier);
         
         if (!allowed) {
             emit SwapAttempt(user, poolIdBytes, false, "Insufficient tier");
-            revert("Compliance failed: insufficient tier");
+            revert("Compliance failed");
         }
         
         emit SwapAttempt(user, poolIdBytes, true, "Approved");
         
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     // Get user compliance level
     function getUserComplianceLevel(address user) public view returns (UserStatus) {
-        // Check if manually set
         if (userStatus[user] != UserStatus.NON_COMPLIANT) {
             return userStatus[user];
         }
         
-        // Check risk score
         try riskCalculator.getUserRiskScore(user) returns (uint256 score, uint256) {
             if (score >= 90) return UserStatus.INSTITUTIONAL;
             if (score >= 75) return UserStatus.VERIFIED;
             if (score >= 50) return UserStatus.PUBLIC;
-        } catch {
-            // If risk calculator fails, default to non-compliant
-        }
+        } catch {}
         
         return UserStatus.NON_COMPLIANT;
     }
 
-    // Check if user can access pool tier
+    // Check tier access
     function checkTierAccess(UserStatus userTier, ComplianceTier poolTier) internal pure returns (bool) {
         if (userTier == UserStatus.WHITELISTED) return true;
         if (userTier == UserStatus.BLACKLISTED) return false;
@@ -205,26 +178,24 @@ contract ComplianceHook is BaseHook {
         return false;
     }
 
-    // Admin functions
+    // Admin: Set user status
     function setUserStatus(address user, UserStatus status) external onlyOwner {
         userStatus[user] = status;
         emit UserStatusUpdated(user, status);
     }
 
+    // Admin: Whitelist user for pool
     function whitelistUser(bytes32 poolId, address user) external onlyOwner {
         poolWhitelist[poolId][user] = true;
         emit UserWhitelisted(poolId, user);
     }
 
-    function getPoolStats() external view returns (
-        uint256 total,
-        uint256 publicPools,
-        uint256 verifiedPools,
-        uint256 institutionalPools
-    ) {
+    // Get pool statistics
+    function getPoolStats() external view returns (uint256, uint256, uint256, uint256) {
         return (poolCount, publicPoolCount, verifiedPoolCount, institutionalPoolCount);
     }
 
+    // Transfer ownership
     function transferOwnership(address newOwner) external onlyOwner {
         require(newOwner != address(0), "Invalid address");
         owner = newOwner;

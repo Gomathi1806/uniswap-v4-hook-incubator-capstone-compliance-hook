@@ -1,0 +1,21 @@
+{
+  "name": "uniswap-v4-hook-incubator-capstone-compliance-hook",
+  "version": "1.0.0",
+  "description": "A privacy-preserving, institutional-grade KYC/AML compliance system for Uniswap V4 that integrates Fhenix FHE technology for confidential compliance verification. 🔒 Privacy-First Compliance This project combines traditional compliance requirements with cutting-edge privacy technology, ensuring regulatory compliance without sacrificing user confidentiality. 📋 Project Overview",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@chainlink/contracts": "^1.4.0",
+    "@chainlink/contracts-ccip": "^1.6.3",
+    "@chainlink/functions-toolkit": "^0.3.2",
+    "@openzeppelin/contracts": "^5.4.0"
+  }
+}
